@@ -1,0 +1,319 @@
+---
+title: "Nonlinear Methods: k Nearest Neighbors"
+author: "Justin Post"
+output: 
+      ioslides_presentation:
+         css: style.css
+         widescreen: true
+         runtime: shiny
+transition: faster
+logo: logo.png
+---
+
+```{r,echo=FALSE,message=FALSE, warning = FALSE}
+library(tidyverse)
+library(haven)
+library(knitr)
+library(rgl)
+library(tree)
+library(shiny)
+library(class)
+options(dplyr.print_min = 5)
+options(tibble.print_min = 5)
+opts_chunk$set(message = FALSE)
+knit_hooks$set(webgl = hook_webgl)
+```
+
+
+
+## Supervised Learning 
+
+Prediction our goal:  
+
+Generally broken into two categories  
+
+- Regression  
+
+    + Quantitative response  
+    + Prediction of response  
+
+- Classification  
+
+    + Categorical response  
+    + Predict class membership or probability of membership  
+    + Saw logistic regression and will see classification trees, now we'll look at K Nearest Neighbors (KNN)  
+    
+
+## Example  
+
+Suppose you have two predictors and a categorical response (red or blue)
+
+```{r, echo = FALSE}
+library("ElemStatLearn")
+train <- mixture.example$x
+trainclass <- mixture.example$y
+test <- mixture.example$xnew
+pts1 <- mixture.example$px1
+pts2 <- mixture.example$px2
+plot(train, asp = 1, type = "n", xlab = "x1", ylab = "x2", 
+         xlim = range(pts2), ylim = range(pts2))
+points(train, col = ifelse(trainclass == 1, "coral", "cornflowerblue"), cex = 1.5, pch = 21, lwd = 2)
+```
+
+## kNN
+
+Want to predict class membership (red or blue) based on (x1, x2) combination  
+
+k Nearest Neighbor idea:  
+
+> - Use "closest" k observations from training set to predict class (should usually standardize predictors - center/scale)  
+
+> - Often use Euclidean distance between predictors to determine closest 
+
+> - $P(red|x1,x2) = \mbox{proportion of k closest values that are red}$  
+
+> - $P(blue|x1,x2) = \mbox{proportion of k closest values that are blue}$  
+
+> - Classify (predict) to class with highest probability  
+
+
+---
+
+```{r, echo = FALSE, cache = FALSE}
+library("ElemStatLearn")
+library("class")
+library("plotrix")
+library("shiny")
+
+shinyApp(
+	shinyUI(pageWithSidebar(
+  headerPanel('k-Nearest Neighbours Classification'),
+  sidebarPanel(
+    sliderInput('k', 'Select the Number of Nearest Neighbours', value = 25, min = 1, max = 150),
+    checkboxInput('showN', label = "Show the neighbourhood for one point (click to select a point)")
+  ),
+  mainPanel(
+    plotOutput('plot1', width = "600px", height = "600px",  click = "click_plot")#hover = "hover",
+  )
+)),
+
+
+
+
+shinyServer(function(input, output, session) {
+  
+	train <- mixture.example$x
+trainclass <- mixture.example$y
+test <- mixture.example$xnew
+pts1 <- mixture.example$px1
+pts2 <- mixture.example$px2
+	
+  idx  <- NULL
+  dmat <- NULL
+  ## ID the point clicked on 
+  xy  <- reactive(c(input$click_plot$x, input$click_plot$y))
+  id <- observe({
+    if (!is.null(xy())) {
+      dmat <- as.matrix(dist(rbind(xy(), train)))
+      idx <<- which.min(dmat[1, -1])
+      dmat <<- dmat[-1, -1]
+    }
+  })
+  
+
+  output$plot1 <- renderPlot({
+    xy()
+    ## Fit model
+    fit <- knn(train = train, test = test, cl = trainclass, k = input$k, prob = TRUE)
+    probs <- matrix(fit, length(pts1), length(pts2))
+    
+    ## Plot create empty plot
+    plot(train, asp = 1, type = "n", xlab = "x1", ylab = "x2", 
+         xlim = range(pts2), ylim = range(pts2), main =  paste0(input$k, "-Nearest Neighbours"))
+    
+    ## Get neighbourhood, draw circle, if needed
+    if (input$showN & !is.null(idx)) {
+      rad <- sort(dmat[, idx])[1 + input$k]
+      draw.circle(x = train[idx, 1], y = train[idx, 2], radius= rad, col = "lightgoldenrod1")
+    }
+    
+    ## Plot the grid
+    grid <- expand.grid(x = pts1, y = pts2)
+    points(grid, pch = 20, cex = 0.2, col = ifelse(probs > 0.5, "coral", "cornflowerblue"))
+    points(train, col = ifelse(trainclass == 1, "coral", "cornflowerblue"), cex = 1.5, pch = 21, lwd = 2)
+
+    ## Add decision boundary
+    contour(pts1, pts2, probs, levels = 0.5, labels = "", lwd = 1.5, add = TRUE)
+    
+    ## ID points within neighbourhood
+    if (input$showN & !is.null(idx)) {
+      points(train[which(dmat[, idx] <= rad), ], col = "red", pch = 20, cex = 0.75)
+      points(train[idx, , drop = FALSE], pch = 3, cex = 1.5, lwd = 2)
+    }
+      
+  })
+  
+})
+
+)
+```
+
+
+## kNN
+
+- Small $k$ implies flexible (possibly overfit, higher variance)    
+
+     + Training error will be small, may not extend to testing error  
+     
+- Large $k$ implies more rigid (possibly underfit, lower variance)  
+
+- Can do training and test or CV to determine $k$  
+
+Judge error using misclassification rate.  
+
+
+---
+
+```{r, echo = FALSE, out.width = "700px"}
+knitr::include_graphics("kNNTestTrain.PNG")
+```
+
+Courtesy: Introduction to Statistical Learning  
+
+
+## kNN for Regression   
+
+- Same idea, use average of responses of "closest" $k$ observations in training set as prediction  
+
+- Closest again often Euclidean distance
+
+- Very flexible  
+
+---
+
+
+```{r, echo = FALSE, out.width="900px"}
+knitr::include_graphics("kNNReg.PNG")
+```
+
+Courtesy: Introduction to Statistical Learning  
+$k$ = 1 on the left, $k$ = 9 on the right 
+
+## Fitting kNN in R with `class::knn()` Function 
+
+- Titanic Data set: Predict survival status (removed NAs) as a function of traveler age and traveler fare  
+
+- Should center and scale (divide by SD) data  
+
+    + Use training mean and training SD to do standardization for both training and test set  
+    
+    
+
+## Fitting kNN in R with `class::knn()` Function 
+
+- Titanic Data set: Predict survival status (removed NAs) as a function of traveler age and traveler fare  
+
+```{r, echo = FALSE}
+titanicData <- read_csv("titanic.csv")
+titanicData <- filter(titanicData, !is.na(survived) & !is.na(fare) & !is.na(age))
+titanicData$survived <- as.factor(titanicData$survived)
+
+set.seed(1)
+train <- sample(1:nrow(titanicData), size = nrow(titanicData)*0.8)
+test <- dplyr::setdiff(1:nrow(titanicData), train)
+
+titanicDataTrain <- titanicData[train, ]
+trainMeans <- colMeans(select(titanicDataTrain, fare, age))
+trainSDs <- apply(FUN = sd, X = select(titanicDataTrain, fare, age), MARGIN = 2)
+
+#standardize both sets with training data
+titanicDataTrain$stdAge <- (titanicDataTrain$age-trainMeans[2])/trainSDs[2]
+titanicDataTrain$stdFare <- (titanicDataTrain$fare-trainMeans[1])/trainSDs[1]
+
+titanicDataTest <- titanicData[test, ]
+titanicDataTest$stdAge <- (titanicDataTest$age-trainMeans[2])/trainSDs[2]
+titanicDataTest$stdFare <- (titanicDataTest$fare-trainMeans[1])/trainSDs[1]
+
+ggplot(data = titanicDataTrain, aes(x = stdFare, y = stdAge, col = survived)) + geom_point() + ggtitle(label = "Training Set for Titanic Data")
+```
+
+
+## kNN in R
+
+```{r}
+knnFit <- knn(train = select(titanicDataTrain, stdFare, stdAge), 
+							test = select(titanicDataTest, stdFare, stdAge), 
+							cl = titanicDataTrain$survived, 
+							k = 3) #could use CV to determine k
+fitInfo <- tbl_df(data.frame(knnFit, select(titanicDataTest, survived, stdFare, stdAge)))
+fitInfo
+```
+
+## kNN in R
+
+```{r}
+tbl1 <- table(fitInfo$knnFit,fitInfo$survived)
+tbl1
+#misclass rate in test set
+misClass <- 1 - sum(diag(tbl1))/sum(tbl1)
+misClass
+```
+
+## kNN vs Logistic Regression
+
+```{r, echo = FALSE}
+fit <- glm(survived ~ stdFare*stdAge, data = titanicDataTrain, family = "binomial")
+preds <- predict(fit, newdata = select(titanicDataTest, stdFare, stdAge), type = "response")
+glmPreds <- ifelse(preds > 0.5, 1, 0)
+tbl2 <- table(glmPreds, titanicDataTest$survived)
+print("Logistic Regression Predictions")
+tbl2
+phat <- sum(titanicDataTrain$survived == 1)/length(titanicDataTrain$survived)
+print("Predicting everyone dies")  
+tbl3 <- table(rep(0,length(titanicDataTest$survived)), titanicDataTest$survived)
+tbl3
+```
+
+
+## kNN vs Logistic Regression
+
+- kNN does very poorly here - perhaps choose k with CV!  
+
+```{r, echo = FALSE}
+c("Logistic Regression Misclassification Rate" = 
+1-sum(diag(tbl2))/sum(tbl2), 
+"kNN Misclassification Rate" = misClass, 
+"Predicting Death for All" = 
+1-sum(diag(tbl3))/sum(tbl3))
+
+```
+
+## With k = 10  
+
+```{r, echo = FALSE}
+knnFit <- knn(train = select(titanicDataTrain, stdFare, stdAge), 
+							test = select(titanicDataTest, stdFare, stdAge), 
+							cl = titanicDataTrain$survived, 
+							k = 10) #could use CV to determine k
+fitInfo <- tbl_df(data.frame(knnFit, select(titanicDataTest, survived, stdFare, stdAge)))
+tbl1 <- table(fitInfo$knnFit,fitInfo$survived)
+tbl1
+#misclass rate in test set
+misClass <- 1 - sum(diag(tbl1))/sum(tbl1)
+misClass
+c("Logistic Regression Misclassification Rate" = 
+1-sum(diag(tbl2))/sum(tbl2), 
+"kNN Misclassification Rate" = misClass, 
+"Predicting Death for All" = 
+1-sum(diag(tbl3))/sum(tbl3))
+```
+
+
+## Recap  
+
+- k nearest neighbors uses close observations from the training set for prediction  
+
+- Very flexible to not flexible  
+
+- Can be used for both regression and classification  
+
