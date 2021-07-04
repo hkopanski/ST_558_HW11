@@ -1,0 +1,137 @@
+---
+title: "HW 11 (KNN)"
+author: "Halid Kopanski"
+date: "7/4/2021"
+output: 
+  pdf_document: 
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(caret)
+```
+
+## Data Read in and cleaning
+
+```{r data}
+# pulling in and cleaning the data.
+titanicData <-read_csv("titanic.csv")
+titanicData <-filter(titanicData,!is.na(survived)& !is.na(fare)& !is.na(age))
+titanicData$survived <-as.factor(titanicData$survived)
+
+# Creating training and test datasets
+set.seed(1)
+training <-sample(1:nrow(titanicData), size =nrow(titanicData)*0.8)
+testing <- dplyr::setdiff(1:nrow(titanicData), training)
+titanicDataTrain <- titanicData[training, ]
+titanicDataTest <- titanicData[testing, ]
+```
+
+## Short EDA
+
+```{r EDA}
+print(titanicDataTrain)
+summary(titanicDataTrain)
+```
+
+## KNN Fits
+
+```{r KNN}
+# Setting up the train control, in this case we will run a k fold of 10, 3 times
+trctrl <- trainControl(method = "repeatedcv", 
+                       number = 10, 
+                       repeats = 3)
+
+set.seed(2020)
+
+# Using the argument tuneGrid, we will train models using k values of 2 to 30. 
+# The data will be standardized using the preprocess argument.
+# For this case, we will only use the predictors age and fare.
+
+knn_fit1 <- train(survived ~ ., 
+                 data = select(titanicDataTrain, survived, age, fare), 
+                 method = "knn", 
+                 trControl = trctrl, 
+                 preProcess = c("center", "scale"), 
+                 tuneGrid = data.frame(k = 2:30))
+```
+
+## Additional Fits
+
+```{r}
+# Some additional fits using a higher number of predictors. These will 
+# just be used to compare against the original fit.
+
+knn_fit2 <- train(survived ~ ., 
+                 data = select(titanicDataTrain, survived, age, fare, sex), 
+                 method = "knn", 
+                 trControl = trctrl, 
+                 preProcess = c("center", "scale"), 
+                 tuneGrid = data.frame(k = 2:30))
+
+knn_fit3 <- train(survived ~ ., 
+                  data = select(titanicDataTrain, survived, 
+                                age, fare, sex, pclass), 
+                  method = "knn", 
+                  trControl = trctrl, 
+                  preProcess = c("center", "scale"), 
+                  tuneGrid = data.frame(k = 2:30))
+```
+
+## Plots
+
+```{r plots}
+# Plotting the three fits from the previous step, we can see that higher 
+# k values are favored to a certain point.
+plot(knn_fit1)
+plot(knn_fit2)
+plot(knn_fit3)
+```
+
+In the above plots, we can see that the best KNN model using age and fare used a k value of 21. Meaning, an individual classification is determined by the classification of the nearest 21 neighbors. The other two models needed k values of 20 and 3.
+
+```{r prediction}
+set.seed(2020)
+# Run the best knn fit on the test data
+knn_pred <- predict(knn_fit1, newdata = titanicDataTest)
+
+# Create a compare set where none one survived
+comparator <- sum(rep(0, nrow(titanicDataTest)) != 
+                    titanicDataTest$survived) / nrow(titanicDataTest)
+
+misclass <- sum(knn_pred != titanicDataTest$survived) / nrow(titanicDataTest)
+
+# As we can see, the knn model using only age and fare did better 
+# than just assuming none survived.
+
+sprintf("This is the misclassification rate for knn_fit1: %0.3f", misclass)
+sprintf("This is the comparison assuming none survived: %0.3f", comparator)
+
+# Comparing to the other two models, we can see that misclassifications can be 
+# reduced by added more information. In this case, sex is a better predictor 
+# than class. Class actually increased misclassifications.
+
+misclass2 <- sum(predict(knn_fit2, newdata = titanicDataTest) != 
+                   titanicDataTest$survived) / nrow(titanicDataTest)
+
+misclass3 <- sum(predict(knn_fit3, newdata = titanicDataTest) != 
+                   titanicDataTest$survived) / nrow(titanicDataTest)
+
+sprintf("Adding more predictors increased accuracy: %0.3f", 
+        c(misclass2, misclass3))
+```
+
+## Comparing Models
+
+Here we can see how much of a boost in accuracy adding predictors can give to a KNN model.  In the third model even though the test accuracy drops, the value of k required by the model is smaller. The best model k values are 21, 20, and 3 for models using (age, fare), (age, fare, sex), and (age, fare, sex, pclass) respectively.  
+
+```{r morePlots}
+knn_fits <- as_tibble(data.frame(k = 2:30, fit1 = knn_fit1$results[[2]], 
+                                 fit2 = knn_fit2$results[[2]], 
+                                 fit3 = knn_fit3$results[[2]]))
+
+knn_fits %>% gather(key = k_fits, value = accuracy, fit1, fit2, fit3) %>% 
+  ggplot(aes(x = k, y = accuracy, col = k_fits)) + geom_point() + geom_line()
+```
